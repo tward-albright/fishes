@@ -195,90 +195,89 @@ class Simulation:
         px, py = self.pos[:, 0], self.pos[:, 1]
         vx, vy = self.vel[:, 0], self.vel[:, 1]
 
-        # Pairwise squared distances
+        # Build spatial grid
         cell_size = VISUAL_RANGE
-        grid = {}
-        for i, (x, y) in enumerate(zip(px, py)):
-            key = (int(x / cell_size), int(y / cell_size))
+        grid: dict[tuple, list] = {}
+        for i in range(n):
+            key = (int(px[i] / cell_size), int(py[i] / cell_size))
             grid.setdefault(key, []).append(i)
 
-        dx = np.zeros((n, n), dtype=np.float32)
-        dy = np.zeros((n, n), dtype=np.float32)
-        dist2 = np.full((n, n), np.inf, dtype=np.float32)
+        # Accumulate forces per-fish — never allocate n×n
+        fx = np.zeros(n, dtype=np.float32)
+        fy = np.zeros(n, dtype=np.float32)
+
+        SEP2 = SEPARATION_RANGE**2
+        VIS2 = VISUAL_RANGE**2
+        TURN_W = TURN_MARGIN
+        TURN_H = TURN_MARGIN
 
         for i in range(n):
-            cx, cy = int(px[i] / cell_size), int(py[i] / cell_size)
-            neighbours = []
+            xi, yi = float(px[i]), float(py[i])
+            vxi, vyi = float(vx[i]), float(vy[i])
+            cx, cy = int(xi / cell_size), int(yi / cell_size)
+
+            sep_fx = sep_fy = 0.0
+            ali_vx = ali_vy = 0.0
+            coh_px = coh_py = 0.0
+            vis_count = 0
+
             for ox in (-1, 0, 1):
                 for oy in (-1, 0, 1):
-                    neighbours += grid.get((cx + ox, cy + oy), [])
-            for j in neighbours:
-                if i == j:
-                    continue
-                ddx = px[i] - px[j]
-                ddy = py[i] - py[j]
-                dx[i, j] = ddx
-                dy[i, j] = ddy
-                dist2[i, j] = ddx * ddx + ddy * ddy
+                    for j in grid.get((cx + ox, cy + oy), ()):
+                        if i == j:
+                            continue
+                        ddx = xi - float(px[j])
+                        ddy = yi - float(py[j])
+                        d2 = ddx * ddx + ddy * ddy
+                        if d2 < SEP2 and d2 > 0:
+                            inv = 1.0 / (d2**0.5)
+                            sep_fx += ddx * inv
+                            sep_fy += ddy * inv
+                        if d2 < VIS2:
+                            ali_vx += float(vx[j])
+                            ali_vy += float(vy[j])
+                            coh_px += float(px[j])
+                            coh_py += float(py[j])
+                            vis_count += 1
 
-        # --- Separation ---
-        sep_mask = dist2 < SEPARATION_RANGE**2
-        dist_sep = np.sqrt(np.where(sep_mask, dist2, 1.0))
-        w_sep = np.where(sep_mask, 1.0 / dist_sep, 0.0)
-        sep_x = (dx * w_sep).sum(axis=1).astype(np.float32)
-        sep_y = (dy * w_sep).sum(axis=1).astype(np.float32)
+            # Alignment
+            if vis_count > 0:
+                ali_vx /= vis_count
+                ali_vy /= vis_count
+                ali_len = (ali_vx * ali_vx + ali_vy * ali_vy) ** 0.5
+                if ali_len > 0:
+                    ali_vx /= ali_len
+                    ali_vy /= ali_len
+                # Cohesion
+                coh_fx = coh_px / vis_count - xi
+                coh_fy = coh_py / vis_count - yi
+            else:
+                ali_vx = ali_vy = coh_fx = coh_fy = 0.0
 
-        # --- Alignment & Cohesion ---
-        vis_mask = dist2 < VISUAL_RANGE**2
-        count = vis_mask.sum(axis=1).astype(np.float32)
-        safe = count > 0
+            # Soft boundary
+            turn_fx = turn_fy = 0.0
+            if xi < TURN_MARGIN:
+                turn_fx += TURN_FORCE * (TURN_MARGIN - xi) / TURN_W
+            elif xi > WIDTH - TURN_MARGIN:
+                turn_fx -= TURN_FORCE * (xi - (WIDTH - TURN_MARGIN)) / TURN_W
+            if yi < TURN_MARGIN:
+                turn_fy += TURN_FORCE * (TURN_MARGIN - yi) / TURN_H
+            elif yi > HEIGHT - TURN_MARGIN:
+                turn_fy -= TURN_FORCE * (yi - (HEIGHT - TURN_MARGIN)) / TURN_H
 
-        ali_x = np.zeros(n, dtype=np.float32)
-        ali_y = np.zeros(n, dtype=np.float32)
-        coh_x = np.zeros(n, dtype=np.float32)
-        coh_y = np.zeros(n, dtype=np.float32)
+            fx[i] = (
+                sep_fx * SEP_WEIGHT
+                + ali_vx * ALI_WEIGHT * 0.3
+                + coh_fx * COH_WEIGHT * 0.001
+                + turn_fx
+            ) * 0.5
+            fy[i] = (
+                sep_fy * SEP_WEIGHT
+                + ali_vy * ALI_WEIGHT * 0.3
+                + coh_fy * COH_WEIGHT * 0.001
+                + turn_fy
+            ) * 0.5
 
-        ali_x[safe] = (vx[np.newaxis, :] * vis_mask).sum(axis=1)[safe] / count[safe]
-        ali_y[safe] = (vy[np.newaxis, :] * vis_mask).sum(axis=1)[safe] / count[safe]
-        coh_x[safe] = (px[np.newaxis, :] * vis_mask).sum(axis=1)[safe] / count[
-            safe
-        ] - px[safe]
-        coh_y[safe] = (py[np.newaxis, :] * vis_mask).sum(axis=1)[safe] / count[
-            safe
-        ] - py[safe]
-
-        ali_len = np.sqrt(ali_x**2 + ali_y**2)
-        ali_len = np.where(ali_len > 0, ali_len, 1.0)
-        ali_x /= ali_len
-        ali_y /= ali_len
-
-        # --- Soft boundary ---
-        turn_x = np.zeros(n, dtype=np.float32)
-        turn_y = np.zeros(n, dtype=np.float32)
-        nl = px < TURN_MARGIN
-        nr = px > WIDTH - TURN_MARGIN
-        nt = py < TURN_MARGIN
-        nb = py > HEIGHT - TURN_MARGIN
-        turn_x[nl] += TURN_FORCE * (TURN_MARGIN - px[nl]) / TURN_MARGIN
-        turn_x[nr] -= TURN_FORCE * (px[nr] - (WIDTH - TURN_MARGIN)) / TURN_MARGIN
-        turn_y[nt] += TURN_FORCE * (TURN_MARGIN - py[nt]) / TURN_MARGIN
-        turn_y[nb] -= TURN_FORCE * (py[nb] - (HEIGHT - TURN_MARGIN)) / TURN_MARGIN
-
-        # --- Combined force ---
-        fx = (
-            sep_x * SEP_WEIGHT
-            + ali_x * ALI_WEIGHT * 0.3
-            + coh_x * COH_WEIGHT * 0.001
-            + turn_x
-        ) * 0.5
-        fy = (
-            sep_y * SEP_WEIGHT
-            + ali_y * ALI_WEIGHT * 0.3
-            + coh_y * COH_WEIGHT * 0.001
-            + turn_y
-        ) * 0.5
-
-        # Push computed forces back into each Fish, then let it move itself
         for i, fish in enumerate(self.fish):
             fish.apply_force(float(fx[i]), float(fy[i]))
             fish.move()
