@@ -26,26 +26,16 @@ class Fish:
     """A single fish with its own position, velocity, and color."""
 
     def __init__(self):
-        self.pos = np.array(
-            [
-                np.random.uniform(TURN_MARGIN, WIDTH - TURN_MARGIN),
-                np.random.uniform(TURN_MARGIN, HEIGHT - TURN_MARGIN),
-            ],
-            dtype=np.float32,
-        )
-
-        angle = np.random.uniform(0, 2 * np.pi)
-        speed = np.random.uniform(MIN_SPEED, MAX_SPEED)
-        self.vel = np.array([np.cos(angle), np.sin(angle)], dtype=np.float32) * speed
-
+        self.pos = np.zeros(2, dtype=np.float32)
+        self.vel = np.zeros(2, dtype=np.float32)
         self.hue = np.random.uniform(170, 220)
-        self.color = self._hue_to_rgb(self.hue)
+        self.color = self._hsv_to_rgb(self.hue, 0.65, 0.8)
+        self.force_magnitude = 0.0
 
     @staticmethod
-    def _hue_to_rgb(hue: float) -> tuple:
-        """Convert a hue (degrees) with fixed saturation/value to an RGB tuple."""
+    def _hsv_to_rgb(hue: float, s: float, v: float) -> tuple:
+        """Convert HSV (hue in degrees, s and v in 0-1) to an RGB tuple."""
         h = hue / 60.0
-        s, v = 0.65, 0.80
         hi = int(h) % 6
         f = h - int(h)
         p = v * (1 - s)
@@ -62,8 +52,39 @@ class Fish:
         r, g, b = rgb_map[hi]
         return (int(r * 220), int(g * 220), int(b * 220))
 
+    def update_color_from_force(self, fx: float, fy: float):
+        """Shift color along a cool-to-warm ramp based on the force magnitude.
+
+        Low force  → calm blue/teal  (hue ~195)
+        High force → stressed amber/red (hue ~20)
+
+        The transition uses an exponential smoothing so the color eases
+        toward the target rather than snapping, giving a fluid shimmer.
+        """
+        FORCE_MAX = 1.2  # magnitude at which color saturates to full warm
+        SMOOTHING = 0.15  # 0 = no change, 1 = instant snap
+
+        magnitude = float(np.sqrt(fx * fx + fy * fy))
+        self.force_magnitude += SMOOTHING * (magnitude - self.force_magnitude)
+
+        t = min(self.force_magnitude / FORCE_MAX, 1.0)  # 0.0 (calm) → 1.0 (stressed)
+
+        # Interpolate hue: 195 (cool blue) → 20 (warm orange-red)
+        # Wrapping: go via 0 by travelling downward from 195
+        hue = 195.0 - t * 175.0  # 195 → 20
+        if hue < 0:
+            hue += 360.0
+
+        # Also brighten slightly under stress (value 0.7 → 1.0)
+        v = 0.70 + t * 0.30
+        # And saturate more under stress (saturation 0.5 → 0.9)
+        s = 0.50 + t * 0.40
+
+        self.color = self._hsv_to_rgb(hue, s, v)
+
     def apply_force(self, fx: float, fy: float):
         """Add a steering force and clamp speed to [MIN_SPEED, MAX_SPEED]."""
+        self.update_color_from_force(fx, fy)
         self.vel[0] += fx
         self.vel[1] += fy
         speed = float(np.sqrt(self.vel[0] ** 2 + self.vel[1] ** 2))
@@ -110,34 +131,95 @@ class Simulation:
     """Manages the school of Fish and runs the vectorised boids update each frame."""
 
     def __init__(self, n: int):
-        self.fish: list = [Fish() for _ in range(n)]
+
+        self.pos = np.zeros((n, 2), dtype=np.float32)
+        self.vel = np.zeros((n, 2), dtype=np.float32)
+
+        self.pos[:, 0] = np.random.uniform(TURN_MARGIN, WIDTH - TURN_MARGIN, n)
+        self.pos[:, 1] = np.random.uniform(TURN_MARGIN, HEIGHT - TURN_MARGIN, n)
+        angles = np.random.uniform(0, 2 * np.pi, n)
+        speeds = np.random.uniform(MIN_SPEED, MAX_SPEED, n)
+        self.vel[:, 0] = np.cos(angles) * speeds
+        self.vel[:, 1] = np.sin(angles) * speeds
+
+        self.fish: list = []
+
+        for i in range(n):
+            fish = Fish()
+            self.fish.append(fish)
+            fish.pos = self.pos[i]
+            fish.vel = self.vel[i]
+            self.pos[i] = fish.pos
+            self.vel[i] = fish.vel
 
     def add_fish(self, count: int = 20):
-        self.fish.extend(Fish() for _ in range(count))
+        n = len(self.fish)
+        new_pos = np.zeros((count, 2), dtype=np.float32)
+        new_vel = np.zeros((count, 2), dtype=np.float32)
+        new_pos[:, 0] = np.random.uniform(TURN_MARGIN, WIDTH - TURN_MARGIN, count)
+        new_pos[:, 1] = np.random.uniform(TURN_MARGIN, HEIGHT - TURN_MARGIN, count)
+        angles = np.random.uniform(0, 2 * np.pi, count)
+        speeds = np.random.uniform(MIN_SPEED, MAX_SPEED, count)
+        new_vel[:, 0] = np.cos(angles) * speeds
+        new_vel[:, 1] = np.sin(angles) * speeds
+
+        self.pos = np.vstack([self.pos, new_pos])
+        self.vel = np.vstack([self.vel, new_vel])
+
+        # Re-point ALL existing fish since vstack allocates a new array
+        for i, fish in enumerate(self.fish):
+            fish.pos = self.pos[i]
+            fish.vel = self.vel[i]
+
+        for i in range(n, n + count):
+            fish = Fish()
+            fish.pos = self.pos[i]
+            fish.vel = self.vel[i]
+            self.fish.append(fish)
 
     def remove_fish(self, count: int = 20):
-        del self.fish[-min(count, len(self.fish)) :]
-
-    def _arrays(self):
-        """Snapshot positions and velocities into NumPy arrays for batch computation."""
-        pos = np.array([f.pos for f in self.fish], dtype=np.float32)
-        vel = np.array([f.vel for f in self.fish], dtype=np.float32)
-        return pos, vel
+        count = min(count, len(self.fish))
+        del self.fish[-count:]
+        self.pos = self.pos[:-count].copy()
+        self.vel = self.vel[:-count].copy()
+        # Re-point remaining fish after the copy
+        for i, fish in enumerate(self.fish):
+            fish.pos = self.pos[i]
+            fish.vel = self.vel[i]
 
     def update(self):
         n = len(self.fish)
         if n == 0:
             return
 
-        pos, vel = self._arrays()
-        px, py = pos[:, 0], pos[:, 1]
-        vx, vy = vel[:, 0], vel[:, 1]
+        px, py = self.pos[:, 0], self.pos[:, 1]
+        vx, vy = self.vel[:, 0], self.vel[:, 1]
 
         # Pairwise squared distances
-        dx = px[:, np.newaxis] - px[np.newaxis, :]
-        dy = py[:, np.newaxis] - py[np.newaxis, :]
-        dist2 = dx * dx + dy * dy
-        np.fill_diagonal(dist2, np.inf)
+        cell_size = VISUAL_RANGE
+        grid = {}
+        for i, (x, y) in enumerate(zip(px, py)):
+            key = (int(x / cell_size), int(y / cell_size))
+            grid.setdefault(key, []).append(i)
+
+        dx = np.zeros((n, n), dtype=np.float32)
+        dy = np.zeros((n, n), dtype=np.float32)
+        dist2 = np.full((n, n), np.inf, dtype=np.float32)
+
+        for i in range(n):
+            cx, cy = int(px[i] / cell_size), int(py[i] / cell_size)
+            neighbours = []
+            for ox in (-1, 0, 1):
+                for oy in (-1, 0, 1):
+                    neighbours += grid.get((cx + ox, cy + oy), [])
+            for j in neighbours:
+                if i == j:
+                    continue
+                ddx = px[i] - px[j]
+                ddy = py[i] - py[j]
+                dx[i, j] = ddx
+                dy[i, j] = ddy
+                dist2[i, j] = ddx * ddx + ddy * ddy
 
         # --- Separation ---
         sep_mask = dist2 < SEPARATION_RANGE**2
