@@ -17,6 +17,14 @@ TURN_MARGIN = 80  # soft boundary margin
 TURN_FORCE = 0.4  # how hard fish turn away from edges
 FLEE_RANGE = 120  # how far a fish can sense a predator
 FLEE_WEIGHT = 5.0  # how hard it steers away
+EAT_RANGE = 15  # radius within which predator eats a fish
+RESPAWN_THRESHOLD = 30  # respawn fish when count drops below this
+FISH_PER_RESPAWN = 20  # how many fish to respawn
+FISH_TO_SPAWN_PREDATOR = 20  # fish eaten to trigger new predator
+MAX_PREDATORS = 5
+MAX_FISH = 200
+PRED_STARVE_TIME = 10.0  # seconds
+PRED_FISH_PER_PERIOD = 3  # fish needed per starve period to survive
 FISH_LENGTH = 8
 FISH_WIDTH = 3
 
@@ -143,9 +151,20 @@ class Predator:
         self.vel = (
             np.array([np.cos(angle), np.sin(angle)], dtype=np.float32) * self.PRED_SPEED
         )
+        self.fish_eaten = 0
+        self.starve_timer = 0.0
+        self.dead = False
+        self.speed = Predator.PRED_SPEED
 
-    def update(self, fish_pos: np.ndarray):
+    def update(self, fish_pos: np.ndarray, dt: float):
         """Steer toward the closest fish."""
+        self.starve_timer += dt
+        if self.starve_timer >= PRED_STARVE_TIME:
+            if self.fish_eaten < PRED_FISH_PER_PERIOD:
+                self.dead = True
+            else:
+                self.fish_eaten = 0
+                self.starve_timer = 0.0
         if len(fish_pos) == 0:
             return
         diffs = fish_pos - self.pos  # (n, 2)
@@ -154,7 +173,7 @@ class Predator:
         direction = diffs[nearest]
         length = float(np.linalg.norm(direction))
         if length > 0:
-            self.vel = (direction / length * self.PRED_SPEED).astype(np.float32)
+            self.vel = (direction / length * self.speed).astype(np.float32)
 
         self.pos += self.vel
         if self.pos[0] < -10:
@@ -235,7 +254,7 @@ class Simulation:
             fish.pos = self.pos[i]
             fish.vel = self.vel[i]
 
-    def update(self):
+    def update(self, dt: float = 0.0):
         n = len(self.fish)
         if n == 0:
             return
@@ -255,6 +274,8 @@ class Simulation:
         SEP2 = SEPARATION_RANGE**2
         VIS2 = VISUAL_RANGE**2
         FLEE2 = FLEE_RANGE**2
+        EAT2 = EAT_RANGE**2
+        to_eat = set()
 
         for i in range(n):
             xi, yi = float(px[i]), float(py[i])
@@ -313,7 +334,9 @@ class Simulation:
                 ddx = xi - float(pred.pos[0])
                 ddy = yi - float(pred.pos[1])
                 d2 = ddx * ddx + ddy * ddy
-                if d2 < FLEE2 and d2 > 0:
+                if d2 < EAT2:
+                    to_eat.add(i)
+                elif d2 < FLEE2 and d2 > 0:
                     inv = 1.0 / d2**0.5
                     flee_fx += ddx * inv
                     flee_fy += ddy * inv
@@ -337,8 +360,36 @@ class Simulation:
             fish.apply_force(float(fx[i]), float(fy[i]))
             fish.move()
 
+        if to_eat:
+            survivors = [i for i in range(len(self.fish)) if i not in to_eat]
+            for pred in self.predators:
+                if pred.dead:
+                    continue
+                pred.fish_eaten += len(to_eat)
+                pred.starve_timer = 0.0
+            self.pos = self.pos[survivors].copy()
+            self.vel = self.vel[survivors].copy()
+            self.fish = [self.fish[i] for i in survivors]
+            for i, fish in enumerate(self.fish):
+                fish.pos = self.pos[i]
+                fish.vel = self.vel[i]
+
         for pred in self.predators:
-            pred.update(self.pos)
+            pred.update(self.pos, dt)
+
+        self.predators = [p for p in self.predators if not p.dead]
+
+        for pred in self.predators:
+            if (
+                pred.fish_eaten >= FISH_TO_SPAWN_PREDATOR
+                and len(self.predators) < MAX_PREDATORS
+            ):
+                self.predators.append(Predator())
+                pred.fish_eaten = 0
+
+        if len(self.fish) < RESPAWN_THRESHOLD and len(self.fish) < MAX_FISH:
+            count = min(FISH_PER_RESPAWN, MAX_FISH - len(self.fish))
+            self.add_fish(count)
 
     def draw(self, surface: pygame.Surface):
         for fish in self.fish:
@@ -376,8 +427,17 @@ def main():
                     sim.remove_fish(20)
                 if event.key == pygame.K_p:
                     sim.predators.append(Predator())
+                if event.key == pygame.K_LEFTBRACKET:
+                    Predator.PRED_SPEED = max(0.5, Predator.PRED_SPEED - 0.2)
+                    for pred in sim.predators:
+                        pred.speed = Predator.PRED_SPEED
+                if event.key == pygame.K_RIGHTBRACKET:
+                    Predator.PRED_SPEED = min(8.0, Predator.PRED_SPEED + 0.2)
+                    for pred in sim.predators:
+                        pred.speed = Predator.PRED_SPEED
 
-        sim.update()
+        dt = clock.tick(60) / 1000.0
+        sim.update(dt)
 
         fade = pygame.Surface((WIDTH, HEIGHT))
         fade.fill(BG_COLOR)
@@ -388,8 +448,9 @@ def main():
 
         if show_help:
             lines = [
-                f"Fish: {len(sim.fish)}   Predators: {len(sim.predators)}",
+                f"Fish: {len(sim.fish)}   Predators: {len(sim.predators)}   Speed: {Predator.PRED_SPEED:.1f}",
                 "UP/DOWN — add/remove fish   P — add predator",
+                "[ / ] — decrease/increase predator speed",
                 "H — toggle this help   ESC — quit",
             ]
             for i, line in enumerate(lines):
@@ -400,7 +461,6 @@ def main():
         screen.blit(fps_txt, (WIDTH - 80, 10))
 
         pygame.display.flip()
-        clock.tick(60)
 
 
 if __name__ == "__main__":
