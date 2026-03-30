@@ -1,29 +1,44 @@
 # fishes
-Simulates predator and prey fish in the ocean.
+
+A boids-based predator and prey fish simulation using Pygame.
 
 ## Features
 
 ### School Behavior
-- The prey fish swim in an organized way, akin to how real schools of fish swim.
-- Prey fish swirl around large predators to distract them
-- Prey fish reproduce at a steady rate
-- Prey fish have a fast swim speed, but low stamina
+- Boids algorithm for realistic flocking behavior
+- Fish flee when predators approach
+- Natural reproduction when fish are close to each other
+- Visual feedback: fish change color when stressed
 
 ### Predator Behavior
-- Predators can eat the fish by coming in contact with them
-- Predators will reproduce if they're well-fed
-- Predators die of old age, eventually
-- Predators have low stamina, but high swim speed
+- Patrol mode: predators circle when no fish nearby
+- Chase mode: predators pursue nearest fish
+- Predators eat fish within catch radius
+- Predators reproduce when well-fed (after eating 20 fish)
+- Predators starve if they don't eat enough fish within a time period
 
-### Parameters
-- School:
-  - Distance from each other
-  - Distance from predators
-  - Max stamina
-  - Swim speed
-  - Reproduction rate
-- Predators
-  - Max stamina
-  - Swim speed
-  - Max age
-  - Food threshold for reproduction
+### Controls
+- `UP/DOWN` - Add/remove 20 fish
+- `P` - Add a predator
+- `[ / ]` - Decrease/increase predator speed
+- `S` - Toggle parameter sliders
+- `C` - Toggle predator patrol circle visualization
+- `H` - Toggle help overlay
+- `ESC` - Quit
+
+### Parameters (adjustable via sliders)
+- **Speed** - Predator swim speed
+- **Visual Range** - How far fish can see neighbors
+- **Separation** - Minimum comfortable distance between fish
+- **Flee Range** - How far fish can sense predators
+- **Flee Weight** - How strongly fish flee from predators
+- **Reproduce** - Chance of fish reproduction per nearby pair
+
+## Installation
+
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+Requires: pygame, scipy, pygame-widgets
