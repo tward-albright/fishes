@@ -25,6 +25,7 @@ MAX_PREDATORS = 5
 MAX_FISH = 200
 PRED_STARVE_TIME = 10.0  # seconds
 PRED_FISH_PER_PERIOD = 3  # fish needed per starve period to survive
+PRED_SEPARATION_RANGE = 50  # predators try to stay apart
 FISH_LENGTH = 8
 FISH_WIDTH = 3
 
@@ -156,8 +157,8 @@ class Predator:
         self.dead = False
         self.speed = Predator.PRED_SPEED
 
-    def update(self, fish_pos: np.ndarray, dt: float):
-        """Steer toward the closest fish."""
+    def update(self, fish_pos: np.ndarray, dt: float, other_preds: list | None = None):
+        """Steer toward the closest fish and away from other predators."""
         self.starve_timer += dt
         if self.starve_timer >= PRED_STARVE_TIME:
             if self.fish_eaten < PRED_FISH_PER_PERIOD:
@@ -165,15 +166,32 @@ class Predator:
             else:
                 self.fish_eaten = 0
                 self.starve_timer = 0.0
-        if len(fish_pos) == 0:
-            return
-        diffs = fish_pos - self.pos  # (n, 2)
-        dists = np.linalg.norm(diffs, axis=1)
-        nearest = np.argmin(dists)
-        direction = diffs[nearest]
-        length = float(np.linalg.norm(direction))
+
+        direction = np.zeros(2, dtype=np.float32)
+        sep_dir = np.zeros(2, dtype=np.float32)
+
+        if len(fish_pos) > 0:
+            diffs = fish_pos - self.pos  # (n, 2)
+            dists = np.linalg.norm(diffs, axis=1)
+            nearest = np.argmin(dists)
+            dir_to_fish = diffs[nearest]
+            length = float(np.linalg.norm(dir_to_fish))
+            if length > 0:
+                direction = (dir_to_fish / length).astype(np.float32)
+
+        if other_preds is not None:
+            for other in other_preds:
+                if other is self:
+                    continue
+                diff = self.pos - other.pos
+                dist = float(np.linalg.norm(diff))
+                if 0 < dist < PRED_SEPARATION_RANGE:
+                    sep_dir += diff / dist
+
+        combined = direction + sep_dir * 0.5
+        length = float(np.linalg.norm(combined))
         if length > 0:
-            self.vel = (direction / length * self.speed).astype(np.float32)
+            self.vel = (combined / length * self.speed).astype(np.float32)
 
         self.pos += self.vel
         if self.pos[0] < -10:
@@ -375,7 +393,7 @@ class Simulation:
                 fish.vel = self.vel[i]
 
         for pred in self.predators:
-            pred.update(self.pos, dt)
+            pred.update(self.pos, dt, self.predators)
 
         self.predators = [p for p in self.predators if not p.dead]
 
