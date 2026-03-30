@@ -19,14 +19,16 @@ TURN_FORCE = 0.4  # how hard fish turn away from edges
 FLEE_RANGE = 120  # how far a fish can sense a predator
 FLEE_WEIGHT = 5.0  # how hard it steers away
 EAT_RANGE = 15  # radius within which predator eats a fish
-RESPAWN_THRESHOLD = 30  # respawn fish when count drops below this
-FISH_PER_RESPAWN = 20  # how many fish to respawn
+RESPAWN_THRESHOLD = 5  # respawn fish when count drops below this
+FISH_PER_RESPAWN = 5  # how many fish to respawn
 FISH_TO_SPAWN_PREDATOR = 20  # fish eaten to trigger new predator
 MAX_PREDATORS = 20
 MAX_FISH = 200
 PRED_STARVE_TIME = 10.0  # seconds
 PRED_FISH_PER_PERIOD = 3  # fish needed per starve period to survive
 PRED_SEPARATION_RANGE = 50  # predators try to stay apart
+REPRODUCE_RANGE = 30  # distance at which fish can reproduce
+REPRODUCE_CHANCE = 0.002  # chance per nearby pair per frame
 FISH_LENGTH = 8
 FISH_WIDTH = 3
 
@@ -416,6 +418,35 @@ class Simulation:
             ):
                 self.predators.append(Predator())
                 pred.fish_eaten = 0
+
+        if len(self.fish) >= 2 and len(self.fish) < MAX_FISH:
+            n = len(self.fish)
+            pair_tree = cKDTree(self.pos)
+            pairs = pair_tree.query_pairs(REPRODUCE_RANGE)
+            new_count = 0
+            for i, j in pairs:
+                if np.random.random() < REPRODUCE_CHANCE:
+                    new_pos = (self.pos[i] + self.pos[j]) / 2
+                    new_vel = (self.vel[i] + self.vel[j]) / 2
+                    speed = np.linalg.norm(new_vel)
+                    if speed > 0:
+                        new_vel = (
+                            new_vel / speed * np.random.uniform(MIN_SPEED, MAX_SPEED)
+                        )
+                    else:
+                        angle = np.random.uniform(0, 2 * np.pi)
+                        new_vel = np.array(
+                            [np.cos(angle), np.sin(angle)], dtype=np.float32
+                        ) * np.random.uniform(MIN_SPEED, MAX_SPEED)
+                    self.pos = np.vstack([self.pos, new_pos])
+                    self.vel = np.vstack([self.vel, new_vel])
+                    fish = Fish()
+                    fish.pos = self.pos[-1]
+                    fish.vel = self.vel[-1]
+                    self.fish.append(fish)
+                    new_count += 1
+                    if len(self.fish) >= MAX_FISH:
+                        break
 
         if len(self.fish) < RESPAWN_THRESHOLD and len(self.fish) < MAX_FISH:
             count = min(FISH_PER_RESPAWN, MAX_FISH - len(self.fish))
