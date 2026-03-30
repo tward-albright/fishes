@@ -2,6 +2,7 @@ import sys
 
 import numpy as np
 import pygame
+from scipy.spatial import cKDTree
 
 # --- Configuration ---
 WIDTH, HEIGHT = 900, 650
@@ -21,7 +22,7 @@ EAT_RANGE = 15  # radius within which predator eats a fish
 RESPAWN_THRESHOLD = 30  # respawn fish when count drops below this
 FISH_PER_RESPAWN = 20  # how many fish to respawn
 FISH_TO_SPAWN_PREDATOR = 20  # fish eaten to trigger new predator
-MAX_PREDATORS = 5
+MAX_PREDATORS = 20
 MAX_FISH = 200
 PRED_STARVE_TIME = 10.0  # seconds
 PRED_FISH_PER_PERIOD = 3  # fish needed per starve period to survive
@@ -280,12 +281,7 @@ class Simulation:
         px, py = self.pos[:, 0], self.pos[:, 1]
         vx, vy = self.vel[:, 0], self.vel[:, 1]
 
-        # Build spatial grid
-        cell_size = VISUAL_RANGE
-        grid: dict = {}
-        for i in range(n):
-            key = (int(px[i] / cell_size), int(py[i] / cell_size))
-            grid.setdefault(key, []).append(i)
+        tree = cKDTree(self.pos)
 
         fx = np.zeros(n, dtype=np.float32)
         fy = np.zeros(n, dtype=np.float32)
@@ -295,33 +291,49 @@ class Simulation:
         EAT2 = EAT_RANGE**2
         to_eat = set()
 
+        if self.predators:
+            pred_pos = np.array([pred.pos for pred in self.predators], dtype=np.float32)
+            fish_pred_diffs = self.pos[:, np.newaxis, :] - pred_pos[np.newaxis, :, :]
+            fish_pred_dists_sq = np.sum(fish_pred_diffs**2, axis=2)
+            eat_mask = fish_pred_dists_sq < EAT2
+            flee_mask = (fish_pred_dists_sq < FLEE2) & (fish_pred_dists_sq > 0)
+            flee_mask &= ~eat_mask
+            to_eat.update(set(np.where(eat_mask.any(axis=1))[0]))
+            flee_inv = np.zeros_like(fish_pred_dists_sq)
+            valid = flee_mask & (fish_pred_dists_sq > 0)
+            flee_inv[valid] = 1.0 / np.sqrt(fish_pred_dists_sq[valid])
+            flee_fx = np.sum(fish_pred_diffs[:, :, 0] * flee_inv, axis=1)
+            flee_fy = np.sum(fish_pred_diffs[:, :, 1] * flee_inv, axis=1)
+        else:
+            flee_fx = np.zeros(n, dtype=np.float32)
+            flee_fy = np.zeros(n, dtype=np.float32)
+
         for i in range(n):
             xi, yi = float(px[i]), float(py[i])
-            cx, cy = int(xi / cell_size), int(yi / cell_size)
+
+            neighbors = tree.query_ball_point((xi, yi), VISUAL_RANGE)
 
             sep_fx = sep_fy = 0.0
             ali_vx = ali_vy = 0.0
             coh_px = coh_py = 0.0
             vis_count = 0
 
-            for ox in (-1, 0, 1):
-                for oy in (-1, 0, 1):
-                    for j in grid.get((cx + ox, cy + oy), ()):
-                        if i == j:
-                            continue
-                        ddx = xi - float(px[j])
-                        ddy = yi - float(py[j])
-                        d2 = ddx * ddx + ddy * ddy
-                        if d2 < SEP2 and d2 > 0:
-                            inv = 1.0 / d2**0.5
-                            sep_fx += ddx * inv
-                            sep_fy += ddy * inv
-                        if d2 < VIS2:
-                            ali_vx += float(vx[j])
-                            ali_vy += float(vy[j])
-                            coh_px += float(px[j])
-                            coh_py += float(py[j])
-                            vis_count += 1
+            for j in neighbors:
+                if i == j:
+                    continue
+                ddx = xi - float(px[j])
+                ddy = yi - float(py[j])
+                d2 = ddx * ddx + ddy * ddy
+                if d2 < SEP2 and d2 > 0:
+                    inv = 1.0 / d2**0.5
+                    sep_fx += ddx * inv
+                    sep_fy += ddy * inv
+                if d2 < VIS2:
+                    ali_vx += float(vx[j])
+                    ali_vy += float(vy[j])
+                    coh_px += float(px[j])
+                    coh_py += float(py[j])
+                    vis_count += 1
 
             if vis_count > 0:
                 ali_vx /= vis_count
@@ -335,7 +347,6 @@ class Simulation:
             else:
                 ali_vx = ali_vy = coh_fx = coh_fy = 0.0
 
-            # Soft boundary
             turn_fx = turn_fy = 0.0
             if xi < TURN_MARGIN:
                 turn_fx += TURN_FORCE * (TURN_MARGIN - xi) / TURN_MARGIN
@@ -346,32 +357,33 @@ class Simulation:
             elif yi > HEIGHT - TURN_MARGIN:
                 turn_fy -= TURN_FORCE * (yi - (HEIGHT - TURN_MARGIN)) / TURN_MARGIN
 
-            # Flee from predators
-            flee_fx = flee_fy = 0.0
-            for pred in self.predators:
-                ddx = xi - float(pred.pos[0])
-                ddy = yi - float(pred.pos[1])
-                d2 = ddx * ddx + ddy * ddy
-                if d2 < EAT2:
-                    to_eat.add(i)
-                elif d2 < FLEE2 and d2 > 0:
-                    inv = 1.0 / d2**0.5
-                    flee_fx += ddx * inv
-                    flee_fy += ddy * inv
-
             fx[i] = (
                 sep_fx * SEP_WEIGHT
                 + ali_vx * ALI_WEIGHT * 0.3
                 + coh_fx * COH_WEIGHT * 0.001
                 + turn_fx
-                + flee_fx * FLEE_WEIGHT
+                + float(flee_fx[i]) * FLEE_WEIGHT
             ) * 0.5
             fy[i] = (
                 sep_fy * SEP_WEIGHT
                 + ali_vy * ALI_WEIGHT * 0.3
                 + coh_fy * COH_WEIGHT * 0.001
                 + turn_fy
-                + flee_fy * FLEE_WEIGHT
+                + float(flee_fy[i]) * FLEE_WEIGHT
+            ) * 0.5
+            fy[i] = (
+                sep_fy * SEP_WEIGHT
+                + ali_vy * ALI_WEIGHT * 0.3
+                + coh_fy * COH_WEIGHT * 0.001
+                + turn_fy
+                + float(flee_fy[i]) * FLEE_WEIGHT
+            ) * 0.5
+            fy[i] = (
+                sep_fy * SEP_WEIGHT
+                + ali_vy * ALI_WEIGHT * 0.3
+                + coh_fy * COH_WEIGHT * 0.001
+                + turn_fy
+                + float(flee_fy[i]) * FLEE_WEIGHT
             ) * 0.5
 
         for i, fish in enumerate(self.fish):
