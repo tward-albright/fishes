@@ -19,6 +19,52 @@ from constants import (
 )
 
 
+class DeathEffect:
+    def __init__(self, pos: np.ndarray):
+        self.pos = pos.copy()
+        self.angle = np.random.uniform(0, 2 * np.pi)
+        self.lifetime = 0.0
+        self.max_lifetime = 0.5
+
+    def update(self, dt: float):
+        self.lifetime += dt
+        self.angle += dt * 8
+
+    def is_done(self) -> bool:
+        return self.lifetime >= self.max_lifetime
+
+    def draw(self, surface: pygame.Surface):
+        progress = self.lifetime / self.max_lifetime
+        alpha = int(255 * (1 - progress))
+        radius = int(5 + progress * 25)
+
+        center = (int(self.pos[0]), int(self.pos[1]))
+
+        temp_surface = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+        color = (220, 80, 60, alpha)
+
+        points = []
+        for i in range(8):
+            angle = self.angle + i * (np.pi / 4)
+            r = radius * (0.3 + (1 - progress) * 0.7)
+            x = radius + 2 + int(np.cos(angle) * r)
+            y = radius + 2 + int(np.sin(angle) * r)
+            points.append((x, y))
+
+        pygame.draw.polygon(temp_surface, color, points)
+
+        inner_radius = int(radius * 0.3 * progress)
+        if inner_radius > 0:
+            pygame.draw.circle(
+                temp_surface,
+                (255, 200, 150, alpha),
+                (radius + 2, radius + 2),
+                inner_radius,
+            )
+
+        surface.blit(temp_surface, (center[0] - radius - 2, center[1] - radius - 2))
+
+
 class Fish:
     def __init__(self, idx: int = 0):
         self.idx = idx

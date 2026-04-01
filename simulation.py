@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.spatial import cKDTree
-from entities import Fish, Predator
+from entities import Fish, Predator, DeathEffect
 from constants import (
     MAX_FISH,
     MIN_SPEED,
@@ -50,6 +50,7 @@ class Simulation:
         self.frame_count = 0
         self._tree = None
         self._tree_valid = False
+        self.death_effects: list = []
 
     def add_fish(self, count: int = 20):
         count = min(count, MAX_FISH - self.active_count)
@@ -199,6 +200,9 @@ class Simulation:
 
             to_eat_sorted = sorted(to_eat, reverse=True)
             for i in to_eat_sorted:
+                death_pos = self.pos[i].copy()
+                self.death_effects.append(DeathEffect(death_pos))
+
                 last_idx = self.active_count - 1
                 if i != last_idx:
                     self.pos[i] = self.pos[last_idx]
@@ -209,6 +213,10 @@ class Simulation:
                 self.active_count -= 1
                 self.fish.pop()
             self._tree_valid = False
+
+        for effect in self.death_effects:
+            effect.update(dt)
+        self.death_effects = [e for e in self.death_effects if not e.is_done()]
 
         for pred in self.predators:
             pred.update(self.pos[: self.active_count], dt, self.predators)
@@ -265,5 +273,7 @@ class Simulation:
     def draw(self, surface, show_patrol: bool = False):
         for fish in self.fish:
             fish.draw(surface)
+        for effect in self.death_effects:
+            effect.draw(surface)
         for pred in self.predators:
             pred.draw(surface, show_patrol)
