@@ -4,6 +4,7 @@ from constants import WIDTH, HEIGHT, NUM_FISH, BG_COLOR, TRAIL_ALPHA
 from entities import Predator
 from simulation import Simulation
 from widgets import SliderController
+from population_graph import PopulationGraph
 
 
 def main():
@@ -19,6 +20,7 @@ def main():
     show_help = True
     show_patrol = False
     slider_panel = SliderController(WIDTH - 220, 50, sim)
+    pop_graph = PopulationGraph(12, HEIGHT - 75, 150, 60)
 
     while True:
         events = pygame.event.get()
@@ -56,6 +58,7 @@ def main():
         dt = clock.tick(60) / 1000.0
         sim.update(dt)
         slider_panel.apply_to_simulation()
+        pop_graph.update(len(sim.fish), len(sim.predators))
 
         fade = pygame.Surface((WIDTH, HEIGHT))
         fade.fill(BG_COLOR)
@@ -64,6 +67,7 @@ def main():
 
         sim.draw(screen, show_patrol)
         slider_panel.draw()
+        pop_graph.draw(screen)
 
         if show_help:
             lines = [
