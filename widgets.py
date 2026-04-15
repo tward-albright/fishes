@@ -1,13 +1,13 @@
 import pygame
 import pygame_widgets
 from pygame_widgets.slider import Slider
-from entities import Predator
 from constants import (
     VISUAL_RANGE,
     SEPARATION_RANGE,
     FLEE_RANGE,
     FLEE_WEIGHT,
     REPRODUCE_CHANCE,
+    PRED_SPEED,
 )
 
 
@@ -24,7 +24,7 @@ class SliderController:
 
         self.sliders = []
         self.label_texts = [
-            f"Speed: {Predator.PRED_SPEED:.1f}",
+            f"Speed: {PRED_SPEED:.1f}",
             f"Visual Range: {VISUAL_RANGE}",
             f"Separation: {SEPARATION_RANGE}",
             f"Flee Range: {FLEE_RANGE}",
@@ -45,7 +45,7 @@ class SliderController:
                 min=0.5,
                 max=5.0,
                 step=0.1,
-                initial=Predator.PRED_SPEED,
+                initial=PRED_SPEED,
                 colour=(70, 90, 110),
                 handleColour=(150, 180, 200),
             )
@@ -164,10 +164,10 @@ class SliderController:
     def apply_to_simulation(self):
         import constants
 
-        Predator.PRED_SPEED = self.sliders[0].getValue()
+        PRED_SPEED = self.sliders[0].getValue()
         if self.sim:
             for pred in self.sim.predators:
-                pred.speed = Predator.PRED_SPEED
+                pred.speed = PRED_SPEED
 
         constants.VISUAL_RANGE = self.sliders[1].getValue()
         constants.SEPARATION_RANGE = self.sliders[2].getValue()
@@ -176,7 +176,7 @@ class SliderController:
         constants.REPRODUCE_CHANCE = self.sliders[5].getValue()
 
         self.label_texts = [
-            f"Speed: {Predator.PRED_SPEED:.1f}",
+            f"Speed: {PRED_SPEED:.1f}",
             f"Visual Range: {int(constants.VISUAL_RANGE)}",
             f"Separation: {int(constants.SEPARATION_RANGE)}",
             f"Flee Range: {int(constants.FLEE_RANGE)}",

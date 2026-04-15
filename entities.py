@@ -14,6 +14,7 @@ from constants import (
     PRED_PATROL_RADIUS,
     PRED_PATROL_CHASE_RADIUS,
     PATROL_SPEED_FACTOR,
+    PRED_SPEED,
     EAT_RANGE,
     FLEE_RANGE,
 )
@@ -154,8 +155,6 @@ class Fish:
 
 
 class Predator:
-    PRED_SPEED = 2.2
-
     def __init__(self):
         self.pos = np.array(
             [
@@ -166,12 +165,12 @@ class Predator:
         )
         angle = np.random.uniform(0, 2 * np.pi)
         self.vel = (
-            np.array([np.cos(angle), np.sin(angle)], dtype=np.float32) * self.PRED_SPEED
+            np.array([np.cos(angle), np.sin(angle)], dtype=np.float32) * PRED_SPEED
         )
         self.fish_eaten = 0
         self.starve_timer = 0.0
         self.dead = False
-        self.speed = Predator.PRED_SPEED
+        self.speed = PRED_SPEED
         self.patrol_center = self.pos.copy()
         self.patrol_angle = np.random.uniform(0, 2 * np.pi)
         self.mode = "patrol"

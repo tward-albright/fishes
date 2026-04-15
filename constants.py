@@ -56,13 +56,14 @@ PATROL_SPEED_FACTOR = 0.6  # Patrol speed relative to chase speed
 # =============================================================================
 PRED_STARVE_TIME = 10.0  # Seconds before predator dies from hunger
 PRED_FISH_PER_PERIOD = 3  # Fish needed per starve period to survive
+PRED_SPEED = 2.2  # Base speed of predators
 FISH_TO_SPAWN_PREDATOR = 20  # Fish eaten to trigger new predator
 MAX_PREDATORS = 5
 
 # =============================================================================
 # Visuals
 # =============================================================================
-FISH_LENGTH = 8
+FISH_LENGTH = 10
 FISH_WIDTH = 3
 BG_COLOR = (10, 22, 40)
 TRAIL_ALPHA = 60  # 0-255, higher = shorter trails
